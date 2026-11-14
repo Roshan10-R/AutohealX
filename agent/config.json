@@ -1,0 +1,17 @@
+{
+  "api_url": "http://YOUR_AUTOHEALX_HOST:8000",
+  "server_id": "PASTE_SERVER_ID_HERE",
+  "api_key": "PASTE_API_KEY_HERE",
+  "interval_seconds": 30,
+  "thresholds": {
+    "cpu_percent": 85,
+    "memory_percent": 90,
+    "disk_percent": 90
+  },
+  "critical_services": ["nginx"],
+  "remediation": {
+    "restart_failed_critical_services": true,
+    "cpu_restart_services": [],
+    "memory_restart_services": []
+  }
+}
