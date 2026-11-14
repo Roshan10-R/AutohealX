@@ -1,49 +1,107 @@
 # AutoHealX
 
-AutoHealX is a lightweight Linux infrastructure monitoring and recovery starter: a FastAPI + MongoDB API, a React/Vite dashboard, and a systemd-managed Linux agent.
+**Monitor your Linux servers, spot infrastructure issues, and track recovery actions from one dashboard.**
+
+AutoHealX is a self-hosted infrastructure monitoring starter with a FastAPI backend, MongoDB storage, a React dashboard, and a Linux agent managed by systemd.
+
+## Contents
+
+- [Features](#features)
+- [Architecture](#architecture)
+- [Requirements](#requirements)
+- [Getting started](#getting-started)
+- [Install a Linux agent](#install-a-linux-agent)
+- [Agent behavior and recovery](#agent-behavior-and-recovery)
+- [API overview](#api-overview)
+- [Security notes](#security-notes)
+
+## Features
+
+- Email and password signup and login.
+- Register and view servers in an auto-refreshing dashboard.
+- Ingest authenticated agent heartbeats, metrics, alerts, and recovery logs.
+- Track CPU, memory, and disk usage trends.
+- Automatically mark servers offline when heartbeats time out.
+- Configure alert thresholds and opt-in service recovery.
+- View recent alerts and recovery actions by server.
+
+## Architecture
+
+| Component | Location | Purpose |
+| --- | --- | --- |
+| API | `backend/app/` | Authentication, server management, agent ingestion, dashboard data |
+| Dashboard | `frontend/src/` | Login, server registration, fleet health, alerts, and recovery history |
+| Linux agent | `agent/` | Collect host metrics, send heartbeats, report alerts, and run configured recovery actions |
+| Database | MongoDB | Stores users, server metadata, metrics, alerts, and recovery logs |
 
 ## Requirements
 
-- Python 3.10+
-- Node.js 18+
-- MongoDB 6+ (local or hosted)
-- Linux host for the monitoring agent; `systemd` is used for installation and recovery actions
+- Python 3.10 or later
+- Node.js 18 or later
+- MongoDB 6 or later (local or hosted)
+- Linux with systemd for installing and running the monitoring agent
 
-## Run locally
+## Getting started
 
-### 1. Start MongoDB
+### 1. Configure the backend
 
-For a local MongoDB installation, start its service and leave it listening at `mongodb://localhost:27017`. For a hosted database, put its connection string in `backend/.env` as `MONGO_URL` or `MONGODB_URI`; the backend loads that file automatically. Do not commit the connection string.
-
-### 2. Start the API
-
-From the repository root, in a terminal:
+From the project root, create a Python environment and install the API dependencies:
 
 ```bash
 cd backend
 python -m venv .venv
-# Linux/macOS:
+```
+
+Activate the environment:
+
+```bash
+# Linux or macOS
 source .venv/bin/activate
-# Windows PowerShell:
+
+# Windows PowerShell
 # .venv\Scripts\Activate.ps1
+```
+
+Install dependencies:
+
+```bash
 pip install -r requirements.txt
 ```
 
-Set a long, unique `JWT_SECRET` in `backend/.env` before starting the API. Generate one with:
+Create `backend/.env` with your MongoDB connection string and a unique JWT signing secret:
 
-```bash
-python -c 'import secrets; print(secrets.token_hex(32))'
+```dotenv
+MONGO_URL=mongodb://localhost:27017
+JWT_SECRET=replace-with-a-long-random-secret
 ```
 
-Add the generated value as `JWT_SECRET=...` alongside your MongoDB URL in `backend/.env`. Alternatively, export `JWT_SECRET` in the shell before starting the API. The API is at `http://localhost:8000`; interactive API documentation is at `http://localhost:8000/docs`. Optional environment variables: `MONGODB_DATABASE`, `JWT_TTL_HOURS`, and `HEARTBEAT_TIMEOUT_SECONDS` (default 90).
+For a hosted MongoDB deployment, use its connection string for `MONGO_URL`. You can generate a random JWT secret with:
 
-Start the API from the `backend` directory:
+```bash
+python -c "import secrets; print(secrets.token_hex(32))"
+```
+
+`MONGODB_URI` can be used instead of `MONGO_URL`. If both are set, `MONGODB_URI` takes precedence. The backend loads `backend/.env` automatically. **Never commit real credentials or `.env` files.**
+
+Optional backend settings:
+
+| Variable | Default | Description |
+| --- | --- | --- |
+| `MONGODB_DATABASE` | `autohealx` | MongoDB database name |
+| `JWT_TTL_HOURS` | `24` | Access token lifetime in hours |
+| `HEARTBEAT_TIMEOUT_SECONDS` | `90` | Time without a heartbeat before a server is marked offline |
+
+### 2. Run the API
+
+From the `backend` directory, with the virtual environment activated:
 
 ```bash
 uvicorn app.main:app --reload
 ```
 
-### 3. Start the dashboard
+The API is available at `http://localhost:8000`. Interactive API documentation is at `http://localhost:8000/docs`; the health check is at `http://localhost:8000/health`.
+
+### 3. Run the dashboard
 
 In another terminal:
 
@@ -53,37 +111,67 @@ npm install
 npm run dev
 ```
 
-Open `http://localhost:5173`, create an account, and register a server. For a non-default API URL, set `VITE_API_URL` before starting or building Vite.
+Open [http://localhost:5173](http://localhost:5173), create an account, and register a server. The frontend defaults to the API at `http://localhost:8000`; set `VITE_API_URL` before starting or building Vite to use a different API URL.
 
-### 4. Install an agent on a Linux server
+### 4. Register a server
 
-Register a server in the dashboard and copy its server ID and one-time API key. On the Linux host, copy the `agent/` directory, then:
+In the dashboard, select **Add server** and provide a name, host, and environment. Copy the generated server ID and API key: the key is shown only once and is needed to configure its agent.
+
+## Install a Linux agent
+
+Copy the `agent/` directory to a Linux host you administer. From that directory, install the systemd service:
 
 ```bash
-cd agent
 sudo ./install.sh
-sudo nano /opt/autohealx/config.json
-sudo systemctl restart autohealx-agent
-sudo systemctl status autohealx-agent
-journalctl -u autohealx-agent -f
 ```
 
-Set `api_url` to the reachable API base URL (no `/api` suffix), then fill in `server_id` and `api_key`. Keep the API key private. The installer preserves an existing config on subsequent runs.
+Edit `/opt/autohealx/config.json` with the server ID and API key from registration. Set `api_url` to the reachable API base URL without an `/api` suffix:
 
-## Agent checks and recovery behavior
+```json
+{
+  "api_url": "https://your-api-host.example",
+  "server_id": "your-server-id",
+  "api_key": "your-one-time-api-key"
+}
+```
 
-The Bash collector samples CPU, memory, root filesystem usage, and nginx service state. The Python wrapper sends heartbeats and metrics, and reports threshold alerts. The dashboard considers a server offline when its last heartbeat is older than `HEARTBEAT_TIMEOUT_SECONDS`.
+Then start and inspect the agent:
 
-Thresholds and the critical-service list are configured in `agent/config.json`. A failed nginx service is restarted by default. CPU and memory recovery is opt-in: add specific, trusted systemd service names to `cpu_restart_services` or `memory_restart_services`. Disk pressure is alerted but cleanup is intentionally not automated; automatic deletion can cause data loss. Recovery attempts and skipped actions are recorded in the dashboard.
+```bash
+sudo systemctl restart autohealx-agent
+sudo systemctl status autohealx-agent
+sudo journalctl -u autohealx-agent -f
+```
 
-The agent needs root privileges for systemd restarts, so only install this agent on hosts you administer. Server credentials are sent in headers and should only be used over a trusted network or TLS-enabled API endpoint.
+The installer keeps an existing `/opt/autohealx/config.json` when run again, so updating agent credentials or settings does not overwrite the current configuration.
 
-## API outline
+## Agent behavior and recovery
 
-- `POST /api/auth/signup`, `POST /api/auth/login`
-- `GET /api/servers`, `POST /api/servers` (authenticated)
-- `GET /api/dashboard` (authenticated; includes servers, recent alerts/recoveries, and up to 24 trend points per server)
-- `POST /api/agent/heartbeat`, `/metrics`, `/alerts`, `/healings` (`X-Server-ID` and `X-API-Key` headers)
-- `GET /health`
+The Bash collector samples CPU, memory, root filesystem usage, and nginx service status. The Python wrapper sends metrics and heartbeats at the interval configured in `agent/config.json`. Servers that exceed the heartbeat timeout are shown as offline.
 
-MongoDB indexes are initialized at API startup. User passwords are salted and hashed; server API keys are stored as SHA-256 hashes and only returned once at registration.
+Thresholds, the critical-service list, and recovery options are configured in `agent/config.json`. A failed nginx service is restarted by default. CPU and memory service restarts are opt-in: configure explicit service names in `cpu_restart_services` or `memory_restart_services`. Disk pressure is reported, but automatic file deletion is disabled to avoid accidental data loss. Recovery attempts and skipped actions are recorded in the dashboard.
+
+## API overview
+
+Authenticated user endpoints require a bearer access token. Agent endpoints require both `X-Server-ID` and `X-API-Key` headers.
+
+| Method | Endpoint | Description |
+| --- | --- | --- |
+| `POST` | `/api/auth/signup` | Create an account |
+| `POST` | `/api/auth/login` | Sign in |
+| `GET` | `/api/servers` | List the signed-in user's servers |
+| `POST` | `/api/servers` | Register a server and create its agent key |
+| `GET` | `/api/dashboard` | Get server health, trends, alerts, and recovery logs |
+| `POST` | `/api/agent/heartbeat` | Update server liveness and agent metadata |
+| `POST` | `/api/agent/metrics` | Store server metrics |
+| `POST` | `/api/agent/alerts` | Record an alert |
+| `POST` | `/api/agent/healings` | Record a recovery action |
+| `GET` | `/health` | Check API availability |
+
+## Security notes
+
+- Keep `backend/.env` and agent `config.json` files private; they contain credentials.
+- User passwords are salted and hashed. Server API keys are stored as hashes and returned only at registration.
+- Use HTTPS or another trusted, encrypted connection between agents, the API, and the dashboard.
+- The agent installer runs with root privileges so it can restart system services. Only enable recovery actions on hosts you administer, and configure only trusted services.
+
